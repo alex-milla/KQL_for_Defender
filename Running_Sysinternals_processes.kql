@@ -1,0 +1,21 @@
+// Legitimate tools are often used in internal attacks. This KQL displays the use of these tools and who is using them to check whether the executions are legitimate or could reveal malicious activity.
+
+let offensiveSysinternals = dynamic([
+    "PsExec.exe", "PsExec64.exe",            // Movimiento lateral y ejecución remota
+    "procdump.exe", "procdump64.exe",        // Volcado de memoria/credenciales (LSASS)
+    "procexp.exe", "procexp64.exe",          // Exploración y manipulación de procesos
+    // "procmon.exe", "procmon64.exe",          // Monitoreo masivo de actividad del sistema
+    "autoruns.exe", "autoruns64.exe",        // Identificación/alteración de persistencia
+    // "handle.exe", "handle64.exe",            // Acceso y manipulación de archivos abiertos/recursos
+    "accesschk.exe", "accesschk64.exe",      // Enumeración de permisos y objetos vulnerables
+    "tcpview.exe", "tcpview64.exe",          // Detección de actividad de red anómala o conexiones C2
+    "pskill.exe", "pskill64.exe",            // Finalización de procesos críticos (defensas, logs, etc.)
+    "PsLoggedon.exe", "PsLoggedon64.exe",    // Enumerar sesiones activas en sistemas ajenos
+    "psservice.exe", "psservice64.exe",      // Manipular servicios (persistence/evasion)
+    "adexplorer.exe", "adexplorer64.exe"     // Exploración de Active Directory
+]);
+DeviceProcessEvents
+| where Timestamp > ago(30d)
+| where FileName in~ (offensiveSysinternals)
+| project Timestamp, DeviceName, FileName, FolderPath, ProcessCommandLine, InitiatingProcessAccountName
+| order by Timestamp desc
