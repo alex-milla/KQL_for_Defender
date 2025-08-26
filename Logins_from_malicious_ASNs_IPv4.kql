@@ -1,0 +1,26 @@
+// Logins from ASNs identified with malicious activity or VPNs. IPv4 only.
+//
+//To add new ASNs that you want to display on screen, simply add them to the list followed by a comma.
+//
+
+let CIDRASN = externaldata (CIDR:string, CIDRASN:int, CIDRASNName:string)
+['https://firewalliplists.gypthecat.com/lists/kusto/kusto-cidr-asn.csv.zip']
+with (ignoreFirstRecord=true);
+SigninLogs
+| where TimeGenerated > ago(1d)
+| where isnotempty(IPAddress)
+| evaluate ipv4_lookup(CIDRASN, IPAddress, CIDR, return_unmatched=true)
+| where CIDRASN in (
+    20473, 64515, 1008, 1024, 10419, 10779, 112, 11246, 11358, 1149,
+    11613, 11644, 11715, 11721, 11832, 11849, 11875, 12136, 12488,
+    13059, 131147, 131222, 131332, 131633, 131659, 131662, 131667,
+    131798, 132119, 132125, 132383, 132479, 132817, 132831, 133072,
+    133096, 133175, 133226, 133398, 133476, 133492, 133504, 133555,
+    133800, 13383, 13405, 134410, 134666, 134671, 134808, 135006,
+    135103, 135168, 13527, 135421, 135489, 135532, 135584, 135646,
+    135671, 13586, 136107, 141039, 147049, 207137, 51332, 9009, 21859,
+    205100, 212238, 174, 203020, 7922, 58065, 36183, 9808, 4837,
+    45177, 4134, 12271, 204720, 14061, 20473
+)
+| where ResultType == 0 or ResultType == 50074
+| project TimeGenerated, UserPrincipalName, IPAddress, ASN=CIDRASNName, AppDisplayName, ResultType, Location, ClientAppUsed, ConditionalAccessStatus
