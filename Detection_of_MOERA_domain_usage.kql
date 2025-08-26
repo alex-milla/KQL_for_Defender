@@ -1,0 +1,13 @@
+// Basado en el KQL original de Sergio Alba: https://www.linkedin.com/feed/update/urn%3Ali%3Aactivity%3A7364932948925579264/
+
+EmailEvents
+| where SenderFromDomain endswith "onmicrosoft.com"
+| extend Date_F = format_datetime(Timestamp, "yyyy-MM-dd")
+| join (
+    EmailEvents
+    | where SenderFromDomain endswith "onmicrosoft.com"
+    | extend Date_F = format_datetime(Timestamp, "yyyy-MM-dd")
+    | summarize Total_External_Domains = dcount(RecipientDomain) by SenderFromDomain, Date_F
+) on SenderFromDomain, Date_F
+| project SenderFromDomain, Date_F, SenderMailFromAddress, Subject, RecipientEmailAddress, RecipientDomain, Total_External_Domains
+| order by Date_F
