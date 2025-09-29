@@ -1,4 +1,4 @@
-// The options to be provided are the sender, recipient, and subject. If the subject is unknown, you can comment on the line.
+// The options to be provided are the sender and search dates, recipient, and subject. If the subject is unknown, you can comment on the line.
 EmailEvents
 | where RecipientEmailAddress == "maildelrecipiente@dominio.com"
       and SenderFromAddress == "remitente@dominio.com"
