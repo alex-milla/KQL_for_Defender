@@ -1,0 +1,49 @@
+// This KQL is designed to help you identify activity within your environment that involves IP addresses, domains, and SHA256 hashes associated 
+// with documented malware and phishing campaigns. It dynamically loads indicators from external GitHub feeds, enabling efficient detection and 
+// monitoring of suspicious events without manual updates to IOC lists. This streamlines threat response and forensic investigations in 
+// Microsoft Sentinel, ensuring you are protected against emerging threats.
+// https://www.cyberintelligence.dev/the-clickfix-factory-first-exposure-of-iuam-clickfix-generator/
+
+// ============= IPs ================
+externaldata(IndicatorIP:string)
+[
+  "https://raw.githubusercontent.com/alex-milla/IOCs/refs/heads/main/IUAMClickFixGenerator/IUAM_ClickFix_Generator_Odyssey_IPs.txt"
+]
+with (format="txt", ignoreFirstRecord = false)
+| join kind=inner (
+    DeviceNetworkEvents
+    | project Timestamp, DeviceName, RemoteIP, LocalIP, InitiatingProcessFileName
+) on $left.IndicatorIP == $right.RemoteIP or $left.IndicatorIP == $right.LocalIP
+
+// ============= Domains ================
+externaldata(IndicatorDomain:string)
+[
+  "https://raw.githubusercontent.com/alex-milla/IOCs/refs/heads/main/IUAMClickFixGenerator/IUAM_ClickFix_Generator_Odyssey_Domains.txt"
+]
+with (format="txt", ignoreFirstRecord = false)
+| join kind=inner (
+    DeviceNetworkEvents
+    | project Timestamp, DeviceName, RemoteUrl, InitiatingProcessFileName
+) on $left.IndicatorDomain == $right.RemoteUrl
+
+// ============= Hashes DeerStealer ================
+externaldata(IndicatorHashDeerStealer:string)
+[
+  "https://raw.githubusercontent.com/alex-milla/IOCs/refs/heads/main/IUAMClickFixGenerator/IUAM_ClickFix_Generator_DeerStealer_SHA256.txt"
+]
+with (format="txt", ignoreFirstRecord = false)
+| join kind=inner (
+    DeviceFileEvents
+    | project Timestamp, DeviceName, SHA256, InitiatingProcessFileName
+) on $left.IndicatorHashDeerStealer == $right.SHA256
+
+// ============= Hashes Odyssey ================
+externaldata(IndicatorHashOdyssey:string)
+[
+  "https://raw.githubusercontent.com/alex-milla/IOCs/refs/heads/main/IUAMClickFixGenerator/IUAM_ClickFix_Generator_Odyssey_SHA256.txt"
+]
+with (format="txt", ignoreFirstRecord = false)
+| join kind=inner (
+    DeviceFileEvents
+    | project Timestamp, DeviceName, SHA256, InitiatingProcessFileName
+) on $left.IndicatorHashOdyssey == $right.SHA256
