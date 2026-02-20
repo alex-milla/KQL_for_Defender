@@ -1,0 +1,126 @@
+// =============================================================================
+// Title   : ClickFix Attack — RunMRU Command Injection + Active User Discovery
+// =============================================================================
+// Description:
+//   Detects post-social-engineering activity where adversaries trick users into
+//   pasting malicious commands into the Windows Run dialog (Win+R). The command
+//   is recorded in the RunMRU registry key and typically abuses nslookup.exe to
+//   perform DNS lookups against rogue servers that return encoded payloads in the
+//   "Name" field of the DNS response — bypassing traditional DNS-based detections.
+//
+//   This query identifies the exact command injected via ClickFix lures, enriches
+//   the result with the active user session at the time of execution, and provides
+//   a risk score based on the severity of the indicators found.
+//
+// Coverage:
+//   - Plain nslookup with hardcoded external DNS server IP
+//   - Obfuscated variant using caret insertion (n^s^l^o^o^k^u^p)
+//   - DNS payload extraction via findstr + for /f + cmd pipe chain
+//   - Registry tampering (UAC/security policy) via Run dialog
+//   - LOLBin execution launched from the Run dialog
+//
+// MITRE ATT&CK:
+//   - T1189  : Drive-by Compromise
+//   - T1202  : Indirect Command Execution
+//   - T1071.004 : Application Layer Protocol — DNS
+//
+// References:
+//   - https://cybersecuritynews.com/clickfix-attack-using-nslookup/
+//   - https://thehackernews.com/2026/02/microsoft-discloses-dns-based-clickfix.html
+//   - https://github.com/mguideit/CrowdStrike-CQL-Hunting-Leads (original CQL by Muhammad Hassoub)
+//
+// Platform  : Microsoft Sentinel / Microsoft Defender XDR
+// Table     : DeviceRegistryEvents, DeviceLogonEvents
+// Author    : Alex Milla — https://alexmilla.net
+// Version   : 1.0
+// Date      : 2026-02-20
+// =============================================================================
+
+// ── STEP 1: Suspicious RunMRU events ─────────────────────────────────────
+let RunMRU_Suspicious = DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey matches regex @"(?i)\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\RunMRU"
+| extend RunCommand       = RegistryValueData
+| extend RunCommandLength = strlen(RegistryValueData)
+| where RunCommandLength > 50
+// Exclusions
+| where RunCommand !~ "EFG-Hermes"
+    and RunCommand !contains "shell::"
+    and RunCommand !startswith "http"
+    and RunCommand !startswith "file:///"
+    // Exclude any local or network drive letter (A:\ through Z:\)
+    and not(RunCommand matches regex @"^[A-Za-z]:\\")
+    // Exclude UNC network paths (\\server\share)
+    and RunCommand !startswith @"\\"
+// Detection indicators
+| extend IsObfuscatedCaret = iff(RunCommand matches regex @"(?i)[n]\^[s]\^[l]\^[o]\^[o]\^[k]", true, false)
+| extend IsSuspiciousDNS   = iff(RunCommand has "nslookup" and RunCommand matches regex @"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", true, false)
+| extend HasPayloadExec    = iff(RunCommand has "cmd" and (RunCommand has "echo" or RunCommand has "for /f"), true, false)
+| extend HasRegTampering   = iff(RunCommand has "reg add" and (
+    RunCommand has "PromptOnSecureDesktop"     or
+    RunCommand has "EnableLUA"                 or
+    RunCommand has "DisableAntiSpyware"        or
+    RunCommand has "DisableRealtimeMonitoring" or
+    RunCommand has "CurrentVersion\\Run"), true, false)
+| extend HasLolBin = iff(RunCommand has_any (
+    "powershell", "mshta", "wscript", "cscript",
+    "certutil", "rundll32", "regsvr32", "msiexec",
+    "wmic", "bitsadmin"), true, false)
+| extend RiskScore =
+      toint(IsObfuscatedCaret) * 5
+    + toint(IsSuspiciousDNS)   * 4
+    + toint(HasPayloadExec)    * 4
+    + toint(HasRegTampering)   * 3
+    + toint(HasLolBin)         * 2
+| where RiskScore > 0
+| extend DetectionReason = case(
+    IsObfuscatedCaret == true and IsSuspiciousDNS == true,
+        "CRITICAL — Obfuscated nslookup + external DNS server",
+    IsObfuscatedCaret == true,
+        "HIGH — Caret obfuscation (n^s^l^o^o^k^u^p pattern)",
+    IsSuspiciousDNS == true and HasPayloadExec == true,
+        "HIGH — DNS staging + payload pipe execution",
+    IsSuspiciousDNS == true,
+        "MEDIUM — Nslookup with hardcoded external DNS server",
+    HasPayloadExec == true,
+        "MEDIUM — Payload execution via cmd pipe chain",
+    HasRegTampering == true,
+        "MEDIUM — Registry tampering via Run dialog",
+    HasLolBin == true,
+        "LOW — LOLBin execution from Run dialog",
+    "INFO — Suspicious command"
+)
+| project
+    EventTime = TimeGenerated, DeviceName, DeviceId, RunCommand, RunCommandLength, RiskScore,DetectionReason,
+    IsObfuscatedCaret, IsSuspiciousDNS, HasPayloadExec, HasRegTampering, HasLolBin;
+
+// ── STEP 2: Active session on the device at the time of the event ─────────
+// DeviceLogonEvents records interactive logons — the user who had an active
+// session when RunMRU was written is the one who executed the command
+let ActiveSessions = DeviceLogonEvents
+| where LogonType in ("Interactive", "RemoteInteractive", "CachedInteractive")
+| where ActionType == "LogonSuccess"
+| project
+    DeviceName,
+    SessionUser   = AccountName,
+    SessionDomain = AccountDomain,
+    LogonTime     = TimeGenerated;
+// ── STEP 3: Join — find the most recent active session before the event ───
+// The logon must be PRIOR to the RunMRU event and within the last 8 hours
+RunMRU_Suspicious
+| join kind=leftouter (ActiveSessions) on DeviceName
+| where LogonTime <= EventTime
+    and LogonTime >= datetime_add('hour', -8, EventTime)
+// Keep only the most recent logon before the event
+| summarize
+    arg_max(LogonTime, SessionUser, SessionDomain)
+    by DeviceName, EventTime, DeviceId,RunCommand, RunCommandLength, RiskScore, DetectionReason,
+       IsObfuscatedCaret, IsSuspiciousDNS, HasPayloadExec, HasRegTampering, HasLolBin
+// ── STEP 4: Final output ──────────────────────────────────────────────────
+| extend
+    FullUser        = strcat(SessionDomain, "\\", SessionUser),
+    ProcessTreeLink = strcat("https://security.microsoft.com/machines/", DeviceId, "/timeline")
+| project
+    DeviceName, FullUser, DetectionReason, RiskScore, RunCommand, RunCommandLength, IsObfuscatedCaret,
+    IsSuspiciousDNS, HasPayloadExec, HasRegTampering, HasLolBin, EventTime, LogonTime, ProcessTreeLink
+| sort by RiskScore desc, EventTime desc
