@@ -31,7 +31,7 @@
 //
 // Platform  : Microsoft Sentinel / Microsoft Defender XDR
 // Table     : DeviceRegistryEvents, DeviceLogonEvents
-// Author    : Alex Milla — https://alexmilla.net
+// Author    : Alex Milla — https://alexmilla.dev
 // Version   : 1.0
 // Date      : 2026-02-20
 // =============================================================================
@@ -123,4 +123,5 @@ RunMRU_Suspicious
 | project
     DeviceName, FullUser, DetectionReason, RiskScore, RunCommand, RunCommandLength, IsObfuscatedCaret,
     IsSuspiciousDNS, HasPayloadExec, HasRegTampering, HasLolBin, EventTime, LogonTime, ProcessTreeLink
+
 | sort by RiskScore desc, EventTime desc
