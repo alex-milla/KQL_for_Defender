@@ -252,11 +252,93 @@ union AppArmorWrite, SudoAbuse, PasswdModify, NamespaceEscape
 | order by Timestamp desc
 ```
 
+### 6. Vulnerable Endpoints
+
+```kusto
+DeviceInfo
+| where TimeGenerated > ago(24h)
+| where OSPlatform == "Linux"
+| summarize arg_max(TimeGenerated, *) by DeviceId, DeviceName
+// Extract kernel version components
+| extend KernelFull  = tostring(OSVersion)
+| extend KernelMajor = toint(extract(@"^(\d+)\.", 1, KernelFull))
+| extend KernelMinor = toint(extract(@"\.(\d+)\.", 1, KernelFull))
+| extend KernelPatch = toint(extract(@"\.(\d+)-", 1, KernelFull))
+| extend KernelBuild = toint(extract(@"-(\d+)\.", 1, KernelFull))
+| extend KernelBranch = strcat(tostring(KernelMajor), ".", tostring(KernelMinor))
+| extend KernelNum = (KernelMajor * 1000000) + (KernelMinor * 10000) + (KernelPatch * 1000) + KernelBuild
+// Identify distro and release name
+| extend DistroRaw = tolower(strcat(tostring(OSDistribution), " ", tostring(OSVersionInfo)))
+| extend UbuntuRelease = case(
+    DistroRaw has "25.10" or DistroRaw has "questing", "Ubuntu 25.10 (Questing Quokka)",
+    DistroRaw has "24.04" or DistroRaw has "noble",    "Ubuntu 24.04 LTS (Noble Numbat)",
+    DistroRaw has "22.04" or DistroRaw has "jammy",    "Ubuntu 22.04 LTS (Jammy Jellyfish)",
+    DistroRaw has "20.04" or DistroRaw has "focal",    "Ubuntu 20.04 LTS (Focal Fossa)",
+    DistroRaw has "18.04" or DistroRaw has "bionic",   "Ubuntu 18.04 LTS (Bionic Beaver)",
+    DistroRaw has "16.04" or DistroRaw has "xenial",   "Ubuntu 16.04 LTS (Xenial Xerus)",
+    KernelBranch == "6.8",  "Ubuntu 24.04 LTS [inferred from kernel]",
+    KernelBranch == "5.15", "Ubuntu 22.04 LTS [inferred from kernel]",
+    KernelBranch == "5.4",  "Ubuntu 20.04 LTS [inferred from kernel]",
+    KernelBranch == "4.15", "Ubuntu 18.04 LTS [inferred from kernel]",
+    KernelBranch == "4.4",  "Ubuntu 16.04 LTS [inferred from kernel]",
+    strcat("Unknown distro (kernel ", KernelBranch, ")")
+)
+// Impact level per release
+| extend ImpactLevel = case(
+    UbuntuRelease has "25.10", "CRITICAL - LPE + Container Escape",
+    UbuntuRelease has "24.04", "CRITICAL - LPE + Container Escape",
+    UbuntuRelease has "22.04", "CRITICAL - LPE + Container Escape",
+    UbuntuRelease has "20.04", "HIGH - Partial Container Escape",
+    UbuntuRelease has "18.04", "HIGH - Partial Container Escape",
+    UbuntuRelease has "16.04", "LOW - DoS only",
+    "Not evaluated"
+)
+// Patch status for patched releases (24.04 / 22.04 / 25.10)
+| extend PatchBase = case(
+    UbuntuRelease has "25.10" and KernelNum >= 6170019, "PATCHED",
+    UbuntuRelease has "25.10" and KernelNum <  6170019, "VULNERABLE",
+    UbuntuRelease has "24.04" and KernelNum >= 6080106,  "PATCHED",
+    UbuntuRelease has "24.04" and KernelNum <  6080106,  "VULNERABLE",
+    UbuntuRelease has "22.04" and KernelNum >= 5150173,  "PATCHED",
+    UbuntuRelease has "22.04" and KernelNum <  5150173,  "VULNERABLE",
+    ""
+)
+// Patch status for releases with no fix yet
+| extend PatchPending = case(
+    UbuntuRelease has "20.04", "PENDING",
+    UbuntuRelease has "18.04", "PENDING",
+    UbuntuRelease has "16.04", "PENDING",
+    ""
+)
+// Consolidate final status
+| extend CrackArmorStatus = case(
+    PatchBase    == "PATCHED",    "PATCHED",
+    PatchBase    == "VULNERABLE", "VULNERABLE",
+    PatchPending == "PENDING",    "PENDING - No patch available",
+    "NOT EVALUATED"
+)
+// Filter only vulnerable or pending devices
+| where CrackArmorStatus in ("VULNERABLE", "PENDING - No patch available")
+// Final output
+| project
+    DeviceName,
+    UbuntuRelease,
+    ImpactLevel,
+    KernelFull,
+    KernelBranch,
+    CrackArmorStatus,
+    OSDistribution,
+    OSVersionInfo,
+    TimeGenerated
+| sort by ImpactLevel asc, DeviceName asc
+```
+
 ---
 
 ## References
 
 - [Qualys TRU: CrackArmor — Critical AppArmor Flaws Enable Local Privilege Escalation](https://blog.qualys.com/vulnerabilities-threat-research/2026/03/12/crackarmor-critical-apparmor-flaws-enable-local-privilege-esc)
+- [Qualys Technical Details]([https://blog.qualys.com/vulnerabilities-threat-research/2026/03/12/crackarmor-critical-apparmor-flaws-enable-local-privilege-esc](https://cdn2.qualys.com/advisory/2026/03/10/crack-armor.txt))
 - [Canonical: AppArmor vulnerability fixes available (11 March 2026)](https://ubuntu.com/blog/apparmor-vulnerability-fixes-available)
 - [Ubuntu Vulnerability Knowledge Base: CrackArmor](https://ubuntu.com/security/vulnerabilities/crackarmor)
 - [The Hacker News: Nine CrackArmor Flaws in Linux AppArmor](https://thehackernews.com/2026/03/nine-crackarmor-flaws-in-linux-apparmor.html)
