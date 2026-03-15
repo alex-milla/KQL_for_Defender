@@ -1,0 +1,8 @@
+// CrackArmor manipulates AppArmor by writing to pseudo-files under /sys/kernel/security/apparmor/ (.load, .replace, .remove) to load or replace security profiles.
+DeviceFileEvents
+| where FolderPath startswith "/sys/kernel/security/apparmor"
+| where FileName in (".load", ".replace", ".remove")
+| project Timestamp, DeviceName, InitiatingProcessAccountName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine,
+          FolderPath, FileName
+| order by Timestamp desc
