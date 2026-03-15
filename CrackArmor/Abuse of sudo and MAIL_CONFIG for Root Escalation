@@ -1,0 +1,9 @@
+// One documented exploit chain abuses the MAIL_CONFIG environment variable alongside sudo and Postfix (sendmail) to gain root.
+DeviceProcessEvents
+| where FileName == "sudo" or FileName == "sendmail"
+| where ProcessCommandLine has_any ("MAIL_CONFIG", "sendmail", "postfix")
+| where InitiatingProcessAccountName != "root"
+| where AccountName == "root" or ProcessTokenElevation == "TokenElevationTypeFull"
+| project Timestamp, DeviceName, AccountName, InitiatingProcessAccountName,
+          ProcessCommandLine, InitiatingProcessCommandLine, FileName
+| order by Timestamp desc
