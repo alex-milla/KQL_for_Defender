@@ -1,0 +1,7 @@
+// CrackArmor can help attackers escape containers by creating user namespaces from unprivileged contexts.
+DeviceProcessEvents
+| where ProcessCommandLine has_any ("unshare", "clone", "--user", "userns")
+| where InitiatingProcessAccountName !in ("root", "system")
+| project Timestamp, DeviceName, AccountName, InitiatingProcessAccountName,
+          ProcessCommandLine, FileName, FolderPath
+| order by Timestamp desc
