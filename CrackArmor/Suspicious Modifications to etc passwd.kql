@@ -1,0 +1,8 @@
+// Some exploitation paths involve modifying /etc/passwd after gaining kernel-level control.
+DeviceFileEvents
+| where FolderPath == "/etc" and FileName == "passwd"
+| where ActionType in ("FileModified", "FileCreated")
+| where InitiatingProcessAccountName != "root"
+| project Timestamp, DeviceName, InitiatingProcessAccountName,
+          InitiatingProcessFileName, InitiatingProcessCommandLine, ActionType
+| order by Timestamp desc
