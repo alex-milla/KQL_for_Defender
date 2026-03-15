@@ -1,0 +1,19 @@
+// Single-query view combining all the CrackArmor behavioral patterns:
+let AppArmorWrite = DeviceFileEvents
+    | where FolderPath startswith "/sys/kernel/security/apparmor"
+    | extend AlertType = "AppArmor pseudofile write";
+let SudoAbuse = DeviceProcessEvents
+    | where ProcessCommandLine has_any ("MAIL_CONFIG", "sendmail")
+      and FileName == "sudo"
+    | extend AlertType = "Sudo MAIL_CONFIG abuse";
+let PasswdModify = DeviceFileEvents
+    | where FolderPath == "/etc" and FileName == "passwd"
+      and InitiatingProcessAccountName != "root"
+    | extend AlertType = "Passwd modified by non-root";
+let NamespaceEscape = DeviceProcessEvents
+    | where ProcessCommandLine has_any ("unshare --user", "userns")
+    | extend AlertType = "User namespace creation";
+union AppArmorWrite, SudoAbuse, PasswdModify, NamespaceEscape
+| project Timestamp, AlertType, DeviceName, AccountName,
+          InitiatingProcessAccountName, ProcessCommandLine, FolderPath, FileName
+| order by Timestamp desc
