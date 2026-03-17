@@ -1,0 +1,35 @@
+// =============================================
+// GlassWorm Wave 5 - Detección Unificada
+// Alex Millà - alexmilla.dev
+// =============================================
+let C2_IPs = dynamic(["45.32.150.251", "45.32.151.157", "70.34.242.255"]);
+let MaliciousPackages = dynamic([
+    "@iflow-mcp/watercrawl-watercrawl-mcp", "@aifabrix/miso-client",
+    "iflow-mcp", "watercrawl-watercrawl-mcp"
+]);
+let MaliciousExtensions = dynamic([
+    "quartz.quartz-markdown-editor", "gvotcha.claude-code-extension",
+    "gvotcha.claude-code-extensions", "cudra-production.vsce-prettier-pro",
+    "daeumer-web.es-linter-for-vs-code", "dark-code-studio.flutter-extension",
+    "namopins.prettier-pro-vscode-extension", "errlenscre.error-lens-finder-ex",
+    "sol-studio.solidity-extension", "turbobase.sql-turbo-tool"
+]);
+// --- Bloque 1: Conexiones C2 ---
+let C2Hits = DeviceNetworkEvents
+| where TimeGenerated > ago(30d)
+| where RemoteIP in (C2_IPs)
+| extend AlertType = "C2 IP Connection", Indicator = RemoteIP;
+// --- Bloque 2: NPM maliciosos ---
+let NPMHits = DeviceProcessEvents
+| where TimeGenerated > ago(30d)
+| where ProcessCommandLine has_any (MaliciousPackages)
+| extend AlertType = "Malicious NPM Package", Indicator = ProcessCommandLine;
+// --- Bloque 3: Extensiones maliciosas ---
+let ExtHits = DeviceFileEvents
+| where TimeGenerated > ago(30d)
+| where FileName has_any (MaliciousExtensions)
+| extend AlertType = "Malicious VSCode Extension", Indicator = FileName;
+// --- Unión final ---
+union C2Hits, NPMHits, ExtHits
+| project TimeGenerated, AlertType, Indicator, DeviceName, AccountName
+| sort by TimeGenerated desc
