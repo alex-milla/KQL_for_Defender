@@ -1,6 +1,9 @@
 
 # GlassWorm — Wave 5: New Delivery Techniques Targeting MCP, GitHub & VSCode
 
+![GlassWorm Wave 5 — koi.ai](https://cdn.prod.website-files.com/689ad8c5d13f40cf59df0e0c/69b6fb663b0c5296916c72db_image-glassworm-mcp.png)
+
+
 > **Threat Intelligence:** [Lotan Sery](https://lnkd.in/dN9Md5cD) — [koi.ai](https://www.koi.ai)  
 > **Original research:** [GlassWorm Hits MCP: 5th Wave with New Delivery Techniques](https://www.koi.ai/blog/glassworm-hits-mcp-5th-wave-with-new-delivery-techniques) — March 16, 2026  
 > **KQL Detection Rules:** [Alex Millà - alexmilla.dev]
