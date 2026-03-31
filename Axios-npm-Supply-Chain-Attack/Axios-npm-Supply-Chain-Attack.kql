@@ -1,0 +1,124 @@
+// ============================================================
+// Detection: Axios npm Supply Chain Attack — Cross-platform RAT
+// Sources:
+//   https://www.endorlabs.com/learn/npm-axios-compromise
+//   https://unaaldia.hispasec.com/2026/03/versiones-maliciosas-de-axios-en-npm-...
+// MITRE:
+//   T1195.001 - Supply Chain Compromise
+//   T1059.001 - PowerShell  |  T1059.005 - VBScript
+//   T1036.003 - Rename System Utilities
+//   T1071.001 - C2 via HTTP
+// Malicious versions: axios@1.14.1 | axios@0.30.4
+// Fraudulent dependency: plain-crypto-js@4.2.1
+// Exposure window: 2026-03-31 00:21 → 03:51 UTC
+// ============================================================
+let C2_IPs = dynamic(["142.11.206.73"]);
+let C2_Domains = dynamic(["sfrclak.com"]);
+let MaliciousHashes = dynamic([
+    "5bb67e88846096f1f8d42a0f0350c9c46260591567612ff9af46f98d1b7571cd",
+    "59336a964f110c25c112bcc5adca7090296b54ab33fa95c0744b94f8a0d80c0f",
+    "58401c195fe0a6204b42f5f90995ece5fab74ce7c69c67a24c61a057325af668",
+    "e10b1fa84f1d6481625f741b69892780140d4e0e7769e7491e5f4d894c2e0e09"
+]);
+let NpmParents = dynamic(["node.exe", "npm", "npm.cmd", "npx", "npx.cmd"]);
+// ── BRANCH 1: File hash match — axios/plain-crypto-js tarballs or setup.js dropper ──
+union
+(
+    DeviceFileEvents
+    | where SHA256 in (MaliciousHashes)
+        or InitiatingProcessSHA256 in (MaliciousHashes)
+    | extend
+        DetectionBranch = "1_FileHash",
+        DetectionReason = strcat("Malicious hash matched: ", SHA256),
+        ConfidenceLevel = "HIGH",
+        Evidence        = strcat(FolderPath, FileName),
+        ParentProcess   = InitiatingProcessFileName,
+        ParentCmdLine   = InitiatingProcessCommandLine,
+        Account         = InitiatingProcessAccountName   // DeviceFileEvents: InitiatingProcessAccountName
+    | project Timestamp, DeviceName, DetectionBranch, ConfidenceLevel, DetectionReason,
+              Evidence, ParentProcess, ParentCmdLine, Account, ReportId
+),
+// ── BRANCH 2: Windows artifacts in anomalous paths, anchored to npm as parent process ──
+// Legitimate wt.exe (Windows Terminal) lives in %LOCALAPPDATA%\Microsoft\WindowsApps, NOT in ProgramData
+(
+    DeviceFileEvents
+    | where ActionType in ("FileCreated", "FileRenamed", "FileWritten")
+        and InitiatingProcessFileName in~ (NpmParents)
+        and (
+            (FileName =~ "wt.exe" and FolderPath has "ProgramData")
+            or (FileName in~ ("6202033.vbs", "6202033.ps1") and FolderPath has @"\Temp\")
+        )
+    | extend
+        DetectionBranch = "2_WinArtifact",
+        DetectionReason = strcat("Dropper artifact found in anomalous path: ", FolderPath, FileName),
+        ConfidenceLevel = "HIGH",
+        Evidence        = strcat(FolderPath, FileName),
+        ParentProcess   = InitiatingProcessFileName,
+        ParentCmdLine   = InitiatingProcessCommandLine,
+        Account         = InitiatingProcessAccountName
+    | project Timestamp, DeviceName, DetectionBranch, ConfidenceLevel, DetectionReason,
+              Evidence, ParentProcess, ParentCmdLine, Account, ReportId
+),
+// ── BRANCH 3: C2 network connection — DeviceNetworkEvents has no AccountName column ──
+// Anchored to npm/node process chain to avoid false positives on generic port 8000 traffic
+(
+    DeviceNetworkEvents
+    | where (RemoteIP in (C2_IPs) or RemoteUrl has_any (C2_Domains))
+        and (
+            InitiatingProcessFileName in~ (NpmParents)
+            or (InitiatingProcessFileName in~ ("curl.exe", "curl")
+                and InitiatingProcessParentFileName in~ (NpmParents))
+            or (InitiatingProcessFileName =~ "wt.exe"
+                and InitiatingProcessFolderPath has "ProgramData")
+        )
+    | extend
+        DetectionBranch = "3_C2Network",
+        DetectionReason = strcat("C2 connection from npm process chain: ",
+                                 InitiatingProcessFileName, " → ", RemoteIP, ":", RemotePort),
+        ConfidenceLevel = "HIGH",
+        Evidence        = strcat(RemoteIP, ":", tostring(RemotePort), " | ", RemoteUrl),
+        ParentProcess   = InitiatingProcessParentFileName,
+        ParentCmdLine   = InitiatingProcessCommandLine,
+        Account         = InitiatingProcessAccountName   // InitiatingProcessAccountName available in DeviceNetworkEvents
+    | project Timestamp, DeviceName, DetectionBranch, ConfidenceLevel, DetectionReason,
+              Evidence, ParentProcess, ParentCmdLine, Account, ReportId
+),
+// ── BRANCH 4: wt.exe → shell execution chain — renamed PowerShell dropped by the dropper ──
+// wt.exe in ProgramData is powershell.exe copied and renamed by the dropper for persistence
+(
+    DeviceProcessEvents
+    | where InitiatingProcessFileName =~ "wt.exe"
+        and InitiatingProcessFolderPath has "ProgramData"
+        and FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "curl.exe")
+    | extend
+        DetectionBranch = "4_WtExecChain",
+        DetectionReason = strcat("Shell launched from anomalous wt.exe in ProgramData: ",
+                                 FileName, " | cmd: ", ProcessCommandLine),
+        ConfidenceLevel = "HIGH",
+        Evidence        = strcat(InitiatingProcessFolderPath, "wt.exe → ", FileName),
+        ParentProcess   = InitiatingProcessFileName,
+        ParentCmdLine   = InitiatingProcessCommandLine,
+        Account         = AccountName                    // DeviceProcessEvents: AccountName directly available
+    | project Timestamp, DeviceName, DetectionBranch, ConfidenceLevel, DetectionReason,
+              Evidence, ParentProcess, ParentCmdLine, Account, ReportId
+),
+// ── BRANCH 5: Exposure window + npm install with affected package names or versions ──
+// MEDIUM confidence — confirm by reviewing lockfile for plain-crypto-js resolution
+(
+    DeviceProcessEvents
+    | where Timestamp between (datetime(2026-03-31T00:00:00Z) .. datetime(2026-03-31T04:00:00Z))
+        and FileName in~ (NpmParents)
+        and ProcessCommandLine has_any ("axios", "plain-crypto-js", "1.14.1", "0.30.4")
+    | extend
+        DetectionBranch = "5_ExposureWindow",
+        DetectionReason = strcat("npm install with affected package during attack window: ",
+                                 ProcessCommandLine),
+        ConfidenceLevel = "MEDIUM — Review lockfile to confirm plain-crypto-js was resolved",
+        Evidence        = ProcessCommandLine,
+        ParentProcess   = InitiatingProcessParentFileName,
+        ParentCmdLine   = ProcessCommandLine,
+        Account         = AccountName
+    | project Timestamp, DeviceName, DetectionBranch, ConfidenceLevel, DetectionReason,
+              Evidence, ParentProcess, ParentCmdLine, Account, ReportId
+)
+| order by Timestamp desc
