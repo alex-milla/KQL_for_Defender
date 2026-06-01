@@ -1,1 +1,32 @@
-
+// Devices NOT updated to Secure Boot 2023 certificates and boot manager
+DeviceTvmSecureConfigurationAssessment
+| where IsApplicable == 1
+| join kind=inner (
+    DeviceTvmSecureConfigurationAssessmentKB
+    | where ConfigurationName == @"Ensure devices are updated to Secure Boot 2023 certificates and boot manager"
+    | project ConfigurationId, ConfigurationName, ConfigurationImpact, RemediationOptions
+) on ConfigurationId
+| summarize arg_max(Timestamp, *) by DeviceId
+// Join with BitLocker assessment
+| join kind=leftouter (
+    DeviceTvmSecureConfigurationAssessment
+    | where IsApplicable == 1
+    | join kind=inner (
+        DeviceTvmSecureConfigurationAssessmentKB
+        | where ConfigurationName has "BitLocker"
+        | project ConfigurationId, ConfigurationName
+    ) on ConfigurationId
+    | summarize arg_max(Timestamp, *) by DeviceId
+    | project DeviceId,
+        BitLockerStatus = iff(IsCompliant == 1, "✅ BitLocker enabled", "❌ BitLocker not enabled")
+) on DeviceId
+| where IsCompliant == 0
+| project
+    DeviceName,
+    OSPlatform,
+    CertificateStatus = "❌ Secure Boot certificate NOT updated",
+    BitLockerStatus = coalesce(BitLockerStatus, "⚠️ No BitLocker data available"),
+    RemediationOptions,
+    ConfigurationImpact,
+    LastAssessment = Timestamp
+| sort by DeviceName asc
