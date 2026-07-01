@@ -1,0 +1,21 @@
+// azure-cli-ropc-mfa-bypass.kql
+// Detects Azure CLI sign-ins via ROPC flow that bypass Conditional Access MFA enforcement.
+// High volume = ROPC gap exists in tenant config. SuccessfulLogins > 0 = confirmed compromise.
+// Reference: Huntress, "No (Bad) CAP: Inside an Ongoing LSHIY Password Spray Attack" (Jun 2026)
+
+union SigninLogs, AADNonInteractiveUserSignInLogs
+| where TimeGenerated >= ago(30d)
+| where AppDisplayName == "Microsoft Azure CLI"
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where ConditionalAccessStatus == "notApplied"
+| extend LoginResult = iff(ResultType == 0, "Success", "Failed")
+| summarize
+    TotalAttempts = count(),
+    SuccessfulLogins = countif(ResultType == 0),
+    FailedLogins = countif(ResultType != 0),
+    DistinctIPs = dcount(IPAddress),
+    SampleIPs = make_set(IPAddress, 5),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by UserPrincipalName
+| order by SuccessfulLogins desc, TotalAttempts desc
