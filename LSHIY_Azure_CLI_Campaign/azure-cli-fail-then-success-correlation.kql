@@ -1,0 +1,31 @@
+// azure-cli-fail-then-success-correlation.kql
+// Correlates mass failed sign-in attempts with a subsequent successful login (compromise indicator).
+// High FailedBeforeSuccess + a valid SuccessTime = likely confirmed account compromise.
+// Reference: Huntress, "No (Bad) CAP: Inside an Ongoing LSHIY Password Spray Attack" (Jun 2026)
+
+let lookback = 30d;
+let failThreshold = 20; // minimum failed attempts to be considered "sprayed"
+let timeWindow = 1h;    // window in which a success following failures is suspicious
+union SigninLogs, AADNonInteractiveUserSignInLogs
+| where TimeGenerated >= ago(lookback)
+| where AppDisplayName == "Microsoft Azure CLI" or IPAddress contains "2a0a:d683"
+| extend LoginResult = iff(ResultType == 0, "Success", "Failed")
+| summarize
+    Attempts = make_list(pack("Time", TimeGenerated, "Result", LoginResult, "IP", IPAddress), 1000)
+    by UserPrincipalName
+| mv-expand Attempts
+| extend
+    EventTime = todatetime(Attempts.Time),
+    EventResult = tostring(Attempts.Result),
+    EventIP = tostring(Attempts.IP)
+| sort by UserPrincipalName asc, EventTime asc
+| serialize
+| extend PrevFailStreak = row_window_session(EventTime, timeWindow, timeWindow, EventResult != "Success")
+| summarize
+    FailedBeforeSuccess = countif(EventResult == "Failed"),
+    SuccessTime = maxif(EventTime, EventResult == "Success"),
+    SuccessIP = maxif(EventIP, EventResult == "Success")
+    by UserPrincipalName, PrevFailStreak
+| where FailedBeforeSuccess >= failThreshold and isnotempty(SuccessTime)
+| project UserPrincipalName, FailedBeforeSuccess, SuccessTime, SuccessIP
+| order by FailedBeforeSuccess desc
