@@ -1,0 +1,7 @@
+union SigninLogs, AADNonInteractiveUserSignInLogs
+| where TimeGenerated >= ago(60d)
+| where IPAddress contains "2a0a:d683"
+| where ResultType in (0, 50055, 50074, 53003)
+| project TimeGenerated, UserPrincipalName, IPAddress, ResultType,
+          ClientAppUsed, ConditionalAccessStatus, AuthenticationRequirement
+| order by TimeGenerated desc
