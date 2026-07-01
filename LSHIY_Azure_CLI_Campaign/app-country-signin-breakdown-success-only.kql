@@ -1,0 +1,25 @@
+// app-country-signin-breakdown-success-only.kql
+// Same as app-country-signin-breakdown.kql but filtered to SUCCESSFUL sign-ins only,
+// with a severity flag for high-risk combinations (unexpected country + legacy app).
+// Reference: Huntress, "No (Bad) CAP: Inside an Ongoing LSHIY Password Spray Attack" (Jun 2026)
+
+union SigninLogs, AADNonInteractiveUserSignInLogs
+| where TimeGenerated >= ago(30d)
+| where ResultType == 0
+| extend Country = tostring(Location)
+// | where Country !contains "ES"   // Uncomment to exclude Spain (expected baseline traffic)
+// | where Country !in ("ES", "PT") // Uncomment to exclude multiple known-good countries
+| extend Severity = case(
+    AppDisplayName == "Microsoft Azure CLI", "Critical",
+    Country !contains "ES" and Country !contains "PT", "High",
+    "Normal")
+| summarize
+    SuccessfulLogins = count(),
+    DistinctUsers = dcount(UserPrincipalName),
+    DistinctIPs = dcount(IPAddress),
+    SampleUsers = make_set(UserPrincipalName, 5),
+    SampleIPs = make_set(IPAddress, 5),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by AppDisplayName, Country, Severity
+| order by Severity asc, SuccessfulLogins desc
