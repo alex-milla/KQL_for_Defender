@@ -1,0 +1,27 @@
+// cap-report-only-mfa-gap.kql
+// Detects sign-ins where Conditional Access is set to Report-Only,
+// meaning MFA/block "would apply" but was never actually enforced.
+// NOTE: This query only reports the presence of report-only CAPs and the sign-ins
+// that would have been affected — it does NOT confirm a vulnerability or compromise.
+// Results require manual review: some report-only policies are intentionally left
+// in audit mode during testing/rollout, and "successful" sign-ins may be legitimate.
+// Reference: Huntress, "No (Bad) CAP: Inside an Ongoing LSHIY Password Spray Attack" (Jun 2026)
+
+SigninLogs
+| where TimeGenerated >= ago(30d)
+| mv-expand ConditionalAccessPolicies
+| extend
+    PolicyName = tostring(ConditionalAccessPolicies.displayName),
+    PolicyResult = tostring(ConditionalAccessPolicies.result),
+    PolicyEnforcementMode = tostring(ConditionalAccessPolicies.enforcedGrantControls)
+| where PolicyResult == "reportOnlySuccess" or PolicyResult == "reportOnlyFailure"
+| extend LoginResult = iff(ResultType == 0, "Success", "Failed")
+| summarize
+    TotalSignIns = count(),
+    SuccessfulLogins = countif(ResultType == 0),
+    DistinctIPs = dcount(IPAddress),
+    SampleIPs = make_set(IPAddress, 5),
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated)
+    by UserPrincipalName, PolicyName, PolicyResult
+| order by SuccessfulLogins desc, TotalSignIns desc
