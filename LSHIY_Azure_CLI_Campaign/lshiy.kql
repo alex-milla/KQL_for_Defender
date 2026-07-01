@@ -1,3 +1,5 @@
+//KQL to detect logins from the LSHIY (AS32167/AS955) IPv6 range linked to the password spray campaign against Azure CLI reported by Huntress (June 2026).
+
 union SigninLogs, AADNonInteractiveUserSignInLogs
 | where TimeGenerated >= ago(60d)
 | where IPAddress contains "2a0a:d683"
