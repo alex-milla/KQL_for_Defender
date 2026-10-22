@@ -1,1 +1,18 @@
-
+// Servers with PHP vulnerable to CVE-2026-109618 / CVE-2026-109619 (PHP2Shell)
+// Vulnerable: PHP 5.4 – 8.5.11 (EOL without patch: <= 8.1). Patched: 8.2.35 / 8.3.36 / 8.4.27 / 8.5.12
+DeviceTvmSoftwareInventory
+| where SoftwareName contains "php" or ProductCodeCpe contains "php"
+| parse SoftwareVersion with Major:long "." Minor:long "." Rest:string
+| extend Patch = tolong(extract(@"^(\d+)", 1, Rest))
+| extend VerNum = Major * 1000000 + Minor * 10000 + Patch
+| extend IsEOLBranch = (Major < 8) or (Major == 8 and Minor <= 1)
+| extend FixedVerNum = case(
+    Major == 8 and Minor == 2, 8020035,   // 8.2.35
+    Major == 8 and Minor == 3, 8030036,   // 8.3.36
+    Major == 8 and Minor == 4, 8040027,   // 8.4.27
+    Major == 8 and Minor == 5, 8050012,   // 8.5.12
+    -1)                                   // No patch available (EOL branch)
+| where IsEOLBranch or VerNum < FixedVerNum
+| project DeviceName, OSPlatform, OSVersion, SoftwareVendor,
+          SoftwareName, SoftwareVersion, EndOfSupportStatus, EndOfSupportDate, ProductCodeCpe
+| sort by DeviceName asc, SoftwareVersion asc
